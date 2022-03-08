@@ -1,0 +1,117 @@
+---
+title: "Stats 369 Assignment3"
+author: "Yongqi Liang"
+date: "27/09/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(rpart)
+library(ranger)
+library(tidyverse)
+```
+
+
+```{r}
+load("spam.rda")
+spam <- wordmatrix # copy data frame
+# remove "w_" for all the column names
+colname <- sapply(colnames(spam), function(name){name = substr(name, 3, nchar(name))})
+colnames(spam) <- colname
+
+spam.df <- as_tibble(spam) %>% add_column(is_spam = as.factor(df$is_spam), .before = 1)
+```
+
+## Task1
+1. Use rpart to fit and prune a tree predicting spam/non-spam from the common word counts in the wordmatrix matrix. Produce a confusion matrix and report its accuracy. Plot the fitted tree (without all the text labels) and comment on its shape.
+```{r}
+set.seed(107)
+tree1 <- rpart(is_spam~., data = spam.df)
+prune_tree1 <- tree1 %>% prune(cp = 0.01)
+plotcp(prune_tree1)
+plot(prune_tree1)
+```
+
+```{r}
+predict1 <-  predict(prune_tree1, type = "class") # Sufficient to get fitted values out
+# Can also do predict(autism.tree1, autism.subset, type = "class")
+confMatrix1 <-  table(Actual = spam.df$is_spam, Predicted = predict1)
+confMatrix1
+# accuracy
+sum(diag(confMatrix1)) / nrow(spam.df)
+```
+The accuracy of this tree is about 0.96. The left side of the tree has so many branches and leaf nodes, but the right of the tree only has two nodes. It may be due to there is one feature that can easily classify the message.
+
+## Task 2
+```{r}
+y_n <- spam.df %>% 
+  group_by(is_spam) %>% 
+  summarise(across(where(is.integer), sum)) %>% 
+  select(-is_spam)
+y_i = t(y_n[2,]) # counts of spam messages containing each words
+n_i = t(y_n[1,]) # counts of non-spam messages containing each words
+e_i <- log(y_i+1) - log(n_i+1) # overall evidence provided by having each word
+```
+
+```{r}
+df <- data.frame(matrix(vector(), 0, 2)) # create an empty data frame to store the label and overall evidence for this message
+names(df) <- c("label","value") # rename the columns
+
+for (i in 1:nrow(spam.df)) { # for each piece of message
+  label <- spam.df[i,][1,1] # the label
+  row1 <- spam.df[i,-1] # all words with theirs value
+  row_val <- t(row1) # transpose our data frame
+  words <- row1[,which(row_val > 0)] # find the words with value more than 0
+  colname <- colnames(words) # get these words
+  e <- e_i[colname,] # get the overall evidence of these words
+  occurance <- t(words) # transpose our data frame
+  summ <- sum(e * occurance) # sums up the e_i for every common word in the message
+  de <- data.frame(label,summ) # create a new data frame to store these information
+  names(de) <- c("label","value")
+  df <- rbind(df, de) # add to df
+}
+head(df)
+```
+
+```{r}
+df_ordered <- df %>% arrange(desc(value)) # reorder the messages by their values
+head(df_ordered)
+df_ordered %>% group_by(label) %>% summarise("count" = n())
+# the proportion of spam observed
+obs_spam <- 747 / 5574
+obs_spam
+```
+
+The proportion of spam observed is 13.4%. So the threshold is 13.4%. Hence, we predict the first 13.4% are spam.
+
+```{r}
+threshold_i <- nrow(df_ordered)*obs_spam # the index of the last spam message we predicted
+cutoff <- df_ordered[threshold_i,2] # the cut off
+
+predict_spam <- df_ordered[1:threshold_i,]
+predict_notspam <- df_ordered[-(1:threshold_i),]
+
+correst_notspam <- sum(as.numeric(predict_notspam$label == FALSE)) # the number of messages have the correct label
+correct_spam <- sum(as.numeric(predict_spam$label == TRUE)) # the number of messages have the correct label
+
+accuracy <- (correst_notspam + correct_spam) / 5574
+accuracy
+```
+
+The accuracy of our classifier is 88%
+
+```{r}
+predict2 <- c(rep("TRUE", 747), rep("FALSE", 5574-747))
+# confusion matrix
+confMatrix2 <-  table(Actual = df_ordered$label, Predicted = predict2)
+confMatrix2
+```
+## Task 3
+
+Our data set is mostly from a subset of 3,375 randomly chosen ham messages from about 10,000 legitimate messages collected for research at the Department of Computer Science at the National University of Singapore. The messages mostly from students attending the university. So this data set might not be representative. Since in our real life, people will receive messages from different fields and during different stages of their life(different age groups), which means they would receive different spam messages. However, our messages are mostly for university students. The content of the message can be different in other situations. So our classifier may not do a good job classifying the spam data from people in other age groups or other areas (students not attending university).
+
+Furthermore, there will be more spam messages in the real world because most people without reporting the spam message received in our data set. If we apply our classifier to the real-life data set, the result may be underestimated. In addition, our classifier was trained by the same data set as the test data set, so it may be overfitting on our collected data. 
+
+So the spam/non-spam accuracy is likely to be higher with this data set than in real life.
+
